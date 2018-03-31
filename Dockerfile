@@ -1,38 +1,23 @@
 FROM debian:buster-slim
 MAINTAINER wekan
 
-# Declare Arguments
-ARG NODE_VERSION
-ARG METEOR_RELEASE
-ARG METEOR_EDGE
-ARG USE_EDGE
-ARG NPM_VERSION
-ARG FIBERS_VERSION
-ARG ARCHITECTURE
-ARG SRC_PATH
+ENV PORT=80
+EXPOSE $PORT
 
-# Set the environment variables (defaults where required)
-# paxctl fix for alpine linux: https://github.com/wekan/wekan/issues/1303
+# Declare Arguments Set the environment variables only before they are needed
 ENV BUILD_DEPS="apt-utils gnupg gosu wget curl bzip2 build-essential python git ca-certificates gcc-7 paxctl"
-ENV NODE_VERSION ${NODE_VERSION:-v8.9.3}
-ENV METEOR_RELEASE ${METEOR_RELEASE:-1.6.0.1}
-ENV USE_EDGE ${USE_EDGE:-false}
-ENV METEOR_EDGE ${METEOR_EDGE:-1.5-beta.17}
-ENV NPM_VERSION ${NPM_VERSION:-5.5.1}
-ENV FIBERS_VERSION ${FIBERS_VERSION:-2.0.0}
-ENV ARCHITECTURE ${ARCHITECTURE:-linux-x64}
-ENV SRC_PATH ${SRC_PATH:-./}
-
-# Copy the app to the image
-COPY ${SRC_PATH} /home/wekan/app
+# including paxctl fix for alpine linux: https://github.com/wekan/wekan/issues/1303
 
 RUN \
-    # Add non-root user wekan
-    useradd --user-group --system --home-dir /home/wekan wekan && \
-    \
     # OS dependencies
-    apt-get update -y && apt-get install -y --no-install-recommends ${BUILD_DEPS} && \
-    \
+    apt-get update -y && apt-get install -y --no-install-recommends ${BUILD_DEPS}
+
+ARG ARCHITECTURE
+ENV ARCHITECTURE ${ARCHITECTURE:-linux-x64}
+ARG NODE_VERSION
+ENV NODE_VERSION ${NODE_VERSION:-v8.9.3}
+
+RUN \
     # Download nodejs
     wget https://nodejs.org/dist/${NODE_VERSION}/node-${NODE_VERSION}-${ARCHITECTURE}.tar.gz && \
     wget https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt.asc && \
@@ -40,7 +25,7 @@ RUN \
     # Verify nodejs authenticity
     grep ${NODE_VERSION}-${ARCHITECTURE}.tar.gz SHASUMS256.txt.asc | shasum -a 256 -c - && \
     export GNUPGHOME="$(mktemp -d)" && \
-    \
+
     # Try other key servers if ha.pool.sks-keyservers.net is unreachable
     # Code from https://github.com/chorrell/docker-node/commit/2b673e17547c34f17f24553db02beefbac98d23c
     # gpg keys listed at https://github.com/nodejs/node#release-team
@@ -62,23 +47,35 @@ RUN \
     # Ignore socket files then delete files then delete directories
     find "$GNUPGHOME" -type f | xargs rm -f && \
     find "$GNUPGHOME" -type d | xargs rm -fR && \
-    rm -f SHASUMS256.txt.asc && \
-    \
+    rm -f SHASUMS256.txt.asc
+
+ARG NPM_VERSION
+ENV NPM_VERSION ${NPM_VERSION:-5.5.1}
+ARG FIBERS_VERSION
+ENV FIBERS_VERSION ${FIBERS_VERSION:-2.0.0}
+RUN \
     # Install Node
     tar xvzf node-${NODE_VERSION}-${ARCHITECTURE}.tar.gz && \
     rm node-${NODE_VERSION}-${ARCHITECTURE}.tar.gz && \
     mv node-${NODE_VERSION}-${ARCHITECTURE} /opt/nodejs && \
     ln -s /opt/nodejs/bin/node /usr/bin/node && \
     ln -s /opt/nodejs/bin/npm /usr/bin/npm && \
-    \
     # paxctl fix for alpine linux: https://github.com/wekan/wekan/issues/1303
     paxctl -mC `which node` && \
-    \
     # Install Node dependencies
     npm install -g npm@${NPM_VERSION} && \
     npm install -g node-gyp && \
-    npm install -g fibers@${FIBERS_VERSION} && \
-    \
+    npm install -g fibers@${FIBERS_VERSION}
+
+ARG METEOR_RELEASE
+ENV METEOR_RELEASE ${METEOR_RELEASE:-1.6.0.1}
+ARG METEOR_EDGE
+ENV METEOR_EDGE ${METEOR_EDGE:-1.5-beta.17}
+ARG USE_EDGE
+ENV USE_EDGE ${USE_EDGE:-false}
+RUN \
+    # Add non-root user wekan
+    mkdir /home/wekan  && useradd --user-group --system --home-dir /home/wekan wekan && \
     # Change user to wekan and install meteor
     cd /home/wekan/ && \
     chown wekan:wekan --recursive /home/wekan && \
@@ -92,8 +89,14 @@ RUN \
       gosu wekan:wekan sh /home/wekan/install_meteor.sh; \
     else \
       gosu wekan:wekan git clone --recursive --depth 1 -b release/METEOR@${METEOR_EDGE} git://github.com/meteor/meteor.git /home/wekan/.meteor; \
-    fi; \
-    \
+    fi;
+
+# Copy the app to the image
+ARG SRC_PATH
+ENV SRC_PATH ${SRC_PATH:-./}
+COPY ${SRC_PATH} /home/wekan/app
+
+RUN \
     # Get additional packages
     mkdir -p /home/wekan/app/packages && \
     chown wekan:wekan --recursive /home/wekan && \
@@ -102,18 +105,25 @@ RUN \
     gosu wekan:wekan git clone --depth 1 -b master git://github.com/meteor-useraccounts/core.git meteor-useraccounts-core && \
     sed -i 's/api\.versionsFrom/\/\/api.versionsFrom/' /home/wekan/app/packages/meteor-useraccounts-core/package.js && \
     cd /home/wekan/.meteor && \
-    gosu wekan:wekan /home/wekan/.meteor/meteor -- help; \
-    \
+    gosu wekan:wekan /home/wekan/.meteor/meteor -- help;
+
+RUN \
     # Build app
-    cd /home/wekan/app && \
+    echo "Building app" && cd /home/wekan/app && \
     gosu wekan:wekan /home/wekan/.meteor/meteor add standard-minifier-js && \
     gosu wekan:wekan /home/wekan/.meteor/meteor npm install && \
     gosu wekan:wekan /home/wekan/.meteor/meteor build --directory /home/wekan/app_build && \
     cp /home/wekan/app/fix-download-unicode/cfs_access-point.txt /home/wekan/app_build/bundle/programs/server/packages/cfs_access-point.js && \
-    chown wekan:wekan /home/wekan/app_build/bundle/programs/server/packages/cfs_access-point.js && \
+    chown wekan:wekan /home/wekan/app_build/bundle/programs/server/packages/cfs_access-point.js
+
+RUN \
+    echo "node_modules bcrypt" && \
     cd /home/wekan/app_build/bundle/programs/server/npm/node_modules/meteor/npm-bcrypt && \
     gosu wekan:wekan rm -rf node_modules/bcrypt && \
-    gosu wekan:wekan npm install bcrypt && \
+    gosu wekan:wekan npm install bcrypt
+
+RUN \
+    echo "server bcrypt" && \
     cd /home/wekan/app_build/bundle/programs/server/ && \
     gosu wekan:wekan npm install && \
     gosu wekan:wekan npm install bcrypt && \
@@ -127,8 +137,5 @@ RUN \
     rm -R /home/wekan/app && \
     rm -R /home/wekan/app_build && \
     rm /home/wekan/install_meteor.sh
-
-ENV PORT=80
-EXPOSE $PORT
 
 CMD ["node", "/build/main.js"]
