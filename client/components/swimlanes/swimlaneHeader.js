@@ -7,11 +7,26 @@ BlazeComponent.extendComponent({
       swimlane.rename(newTitle.trim());
     }
   },
+  addSwimlane(evt) {
+    evt.preventDefault();
+    titleInput = this.find('.swimlane-name-input');
+    const title = titleInput.value.trim();
+    if (title) {
+      Swimlanes.insert({
+        title,
+        boardId: Session.get('currentBoard'),
+        sort: $('.swimlane').length,
+      });
+      titleInput.value = '';
+      titleInput.focus();
+    }
+  },
 
   events() {
     return [{
       'click .js-open-swimlane-menu': Popup.open('swimlaneAction'),
       submit: this.editTitle,
+      addnew: this.addSwimlane,
     }];
   },
 }).register('swimlaneHeader');
